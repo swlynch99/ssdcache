@@ -1,0 +1,31 @@
+value_size = 65536
+memory_bytes = 268435456
+workers = 2
+devices = ["/tmp/ssdcache-dev0.img"]
+device_bytes = 4294967296
+o_direct = true
+host_op = 0.0
+admin_addr = "127.0.0.1:18080"
+spin_us = 20
+[[listeners]]
+addr = "127.0.0.1:11311"
+proto = "memcache"
+[[listeners]]
+addr = "127.0.0.1:16379"
+proto = "resp"
+[[listeners]]
+addr = "127.0.0.1:18081"
+proto = "http"
+[[listeners]]
+addr = "127.0.0.1:11312"
+proto = "memcache"
+tls = true
+[tls]
+cert = "cert.pem"
+key = "key.pem"
+[credits]
+p = 16
+qd = 32
+w = 16
+[wear]
+write_rate_bytes = 200000000
