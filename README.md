@@ -50,7 +50,8 @@ All other knobs and their defaults are in `src/config.rs`: policy, credits and q
 | Policy simulator: real shard code, fake SSD with reordered completions, invariant checks, fault injection | `./target/release/ssdcache-sim --help` |
 | End to end: memcache text/meta, memcache over kTLS, RESP, HTTP | `python3 tests/e2e.py` against a running server |
 | SSD tier: demotion, D hits, reclaim laps, byte-exact verification | `python3 tests/tiering.py --n 45000` |
-| Slow clients: stalled SET bodies time out, slots return, others unaffected | `python3 tests/slowclient.py` |
+| Slow clients: stalled SET bodies time out, slots return, others unaffected | `python3 tests/slowclient.py --workers N` |
+| Filling slot leak: repeated stalled SETs stay within the stash bound | `python3 tests/stallcycles.py --workers N` |
 | Load | `./target/release/ssdcache-bench --preload --keys 3000 --conns 16` |
 
 The Python tests expect the listener ports in `examples/test.toml`: memcache 11311, TLS memcache 11312, RESP 16379, HTTP 18081, admin 18080.
