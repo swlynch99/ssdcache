@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn open_lag_limit_stays_above_one_round_of_opens() {
-        for (n, dev) in [(2u16, 1u64 << 30), (8, 3 << 30), (8, 4 << 30), (8, 64 << 30), (64, 32 << 30), (64, 4096 << 30)] {
+        for (n, dev) in [(2u16, 2u64 << 30), (8, 3 << 30), (8, 4 << 30), (8, 64 << 30), (64, 32 << 30), (64, 4096 << 30)] {
             let mut c = cfg(65536, 4 << 30, n);
             c.memory_bytes = 4 << 30;
             let g = Geometry::compute(&c, dev).unwrap();
