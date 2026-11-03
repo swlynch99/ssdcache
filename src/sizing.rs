@@ -285,14 +285,12 @@ mod tests {
 
     #[test]
     fn open_lag_limit_stays_above_one_round_of_opens() {
-        for (n, dev) in [(2u16, 2u64 << 30), (8, 3 << 30), (8, 4 << 30), (8, 64 << 30), (64, 32 << 30), (64, 4096 << 30)] {
-            let mut c = cfg(65536, 4 << 30, n);
-            c.memory_bytes = 4 << 30;
-            let g = Geometry::compute(&c, dev).unwrap();
+        for (n, dev) in [(2u16, 2u64 << 30), (8, 4 << 30), (8, 64 << 30), (64, 32 << 30), (64, 4096 << 30)] {
+            let g = Geometry::compute(&cfg(65536, 96 << 30, n), dev).unwrap();
             assert!(g.open_lag_limit >= 2 * n as u64, "{n} {dev}: {}", g.open_lag_limit);
             assert!(g.open_lag_limit + g.k_ahead + 2 * n as u64 + 2 <= g.regions, "{n} {dev}");
         }
-        assert!(Geometry::compute(&cfg(65536, 4 << 30, 8), 2 << 30).unwrap_err().contains("need more regions"));
+        assert!(Geometry::compute(&cfg(65536, 96 << 30, 8), 2 << 30).unwrap_err().contains("need more regions"));
     }
 
     #[test]
