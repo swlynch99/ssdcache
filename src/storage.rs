@@ -23,7 +23,10 @@ impl Arena {
         let prot = libc::PROT_READ | libc::PROT_WRITE;
         let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
         if try_hugetlb {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, flags | libc::MAP_HUGETLB, -1, 0) };
+            // No MAP_NORESERVE here: with it, mmap succeeds even when no huge pages are
+            // reserved and the first touch raises SIGBUS. Without it, mmap fails up front.
+            let hflags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB;
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, hflags, -1, 0) };
             if p != libc::MAP_FAILED {
                 return Ok(Arena { base: p as *mut u8, len, hugetlb: true });
             }

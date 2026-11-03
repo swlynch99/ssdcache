@@ -46,7 +46,7 @@ const T_COMMIT: u32 = 3;
 const T_DELETE: u32 = 4;
 #[inline]
 fn tok_kind(t: &ReqToken) -> u32 {
-    t.resp >> 16
+    (t.resp >> 16) & 0xf
 }
 #[inline]
 fn tok_idx(t: &ReqToken) -> u32 {
@@ -281,13 +281,12 @@ unsafe impl Send for Worker {}
 impl Worker {
     pub fn new(id: u16, cfg: &Config, geo: &Geometry, shard: Shard, arena: *mut u8, dev_fds: Vec<i32>, sh: WorkerShared, max_conns: u32) -> std::io::Result<Self> {
         let n = cfg.workers;
-        let ring = IoUring::builder()
-            .setup_single_issuer()
-            .setup_defer_taskrun()
-            .setup_coop_taskrun()
-            .setup_cqsize(16384)
-            .build(4096)
-            .or_else(|_| IoUring::builder().setup_cqsize(16384).build(4096))?;
+        let mut b = IoUring::builder();
+        b.setup_single_issuer().setup_coop_taskrun().setup_cqsize(16384);
+        if std::env::var_os("SSDCACHE_NO_DEFER_TASKRUN").is_none() {
+            b.setup_defer_taskrun();
+        }
+        let ring = b.build(4096).or_else(|_| IoUring::builder().setup_cqsize(16384).build(4096))?;
         let conns = (0..max_conns).map(|_| Conn::new(n as usize)).collect();
         let pairs = (0..n)
             .map(|_| PairBudget {
@@ -737,7 +736,9 @@ impl Worker {
                 match (c.rx, r) {
                     (Rx::AwaitSlot { hdr, owner: o, resp, h }, Reply::Reserved { slot, sgen }) if o == owner => {
                         c.rx = Rx::Body { hdr, owner, resp, h, slot, sgen, filled: 0 };
-                        self.drive(idx);
+                        // Never re-enter drive() from a reply (it may be running now):
+                        // schedule the connection for the next retry pass.
+                        self.park(idx);
                     }
                     (_, Reply::Reserved { slot, sgen }) => {
                         // Unexpected: give it back.
@@ -1021,23 +1022,27 @@ impl Worker {
                             self.arm_recv(idx);
                             return;
                         }
+                        // `consumed` is applied before dispatch: a local owner can reply
+                        // synchronously, and that reply must see the post-header carry.
                         Parsed::Complete { req, consumed } => {
+                            c.c_start += consumed;
                             if !self.dispatch(idx, req) {
                                 let c = &mut self.conns[idx as usize];
+                                c.c_start -= consumed;
                                 c.proto = snapshot;
                                 self.park(idx);
                                 return;
                             }
-                            self.conns[idx as usize].c_start += consumed;
                         }
                         Parsed::Body { hdr, consumed } => {
+                            c.c_start += consumed;
                             if !self.start_body(idx, hdr) {
                                 let c = &mut self.conns[idx as usize];
+                                c.c_start -= consumed;
                                 c.proto = snapshot;
                                 self.park(idx);
                                 return;
                             }
-                            self.conns[idx as usize].c_start += consumed;
                         }
                         Parsed::Reject { err, ctx, consumed, discard_body } => {
                             c.c_start += consumed;
