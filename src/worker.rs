@@ -254,6 +254,7 @@ pub struct Worker {
     start: Instant,
     last_publish: Instant,
     ts: types::Timespec,
+    next_timeout_scan_ns: u64,
     pub counters: WorkerCounters,
 }
 
@@ -326,6 +327,7 @@ impl Worker {
             start: Instant::now(),
             last_publish: Instant::now(),
             ts: types::Timespec::new().nsec(10_000_000),
+            next_timeout_scan_ns: 0,
             counters: WorkerCounters::default(),
         })
     }
@@ -876,10 +878,27 @@ impl Worker {
     }
 
     fn check_timeouts(&mut self, now: u64) {
-        // Body-progress deadline (design §5.1(6)): cheap scan only of connections in Body
-        // phase is not indexed; we piggyback on parked/dirty scans instead. Kept simple:
-        // checked in on_recv for the active connection. (Full reaper: phase 5.)
-        let _ = now;
+        // Body-progress deadline (design §5.1(6)), scanned every 100 ms. On expiry the socket
+        // is shut down; the pending body RECV then completes, and only after that CQE is
+        // reaped does the close path give the Filling slot back (Abort ordering rule §5.1(8)).
+        if now < self.next_timeout_scan_ns {
+            return;
+        }
+        self.next_timeout_scan_ns = now + 100_000_000;
+        for idx in 0..self.conns.len() as u32 {
+            let c = &mut self.conns[idx as usize];
+            if !c.active || c.closing || c.body_deadline_ns == 0 || c.body_deadline_ns > now {
+                continue;
+            }
+            if matches!(c.rx, Rx::Body { .. } | Rx::Trailer { .. }) {
+                c.body_deadline_ns = 0;
+                c.read_closed = true;
+                self.counters.body_timeouts += 1;
+                self.force_close(idx);
+            } else {
+                c.body_deadline_ns = 0;
+            }
+        }
     }
 
     fn arm_recv(&mut self, idx: u32) {
@@ -1074,6 +1093,8 @@ impl Worker {
                         continue;
                     }
                     if c.body_deadline_ns == 0 {
+                        // One deadline for the whole body (not per recv): a client trickling
+                        // bytes cannot hold the slot longer than body_timeout_ms.
                         c.body_deadline_ns = self.start.elapsed().as_nanos() as u64 + self.body_timeout_ns;
                     }
                     self.arm_recv(idx);
@@ -1532,6 +1553,19 @@ impl Worker {
     }
 
     // ================================================================== close
+
+    /// Close now, without draining ready responses (timeouts, protocol violations).
+    fn force_close(&mut self, idx: u32) {
+        let c = &mut self.conns[idx as usize];
+        if !c.active {
+            return;
+        }
+        if !c.closing {
+            c.closing = true;
+            unsafe { libc::shutdown(c.fd, libc::SHUT_RDWR) };
+        }
+        self.maybe_finish_close(idx);
+    }
 
     fn close_conn(&mut self, idx: u32) {
         let c = &mut self.conns[idx as usize];
