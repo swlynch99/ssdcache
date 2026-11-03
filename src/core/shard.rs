@@ -1240,7 +1240,7 @@ impl Shard {
         if let Some(open) = &self.open {
             let age_ns = now_ns.saturating_sub(open.opened_ns);
             let lag = self.flash.cursor().saturating_sub(open.seq);
-            if age_ns > self.cfg.open_max_age_s as u64 * 1_000_000_000 || lag > self.flash.nregions / 4 {
+            if age_ns > self.cfg.open_max_age_s as u64 * 1_000_000_000 || lag > self.geo.open_lag_limit {
                 self.seal_open();
             }
         }

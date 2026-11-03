@@ -45,6 +45,8 @@ pub struct Geometry {
     pub ssd_slots: u64,
     /// Regions kept clean ahead of the global cursor.
     pub k_ahead: u64,
+    /// An open region is sealed when the cursor is more than this many regions past it.
+    pub open_lag_limit: u64,
     // Per-shard metadata
     pub entries: u64,
     pub buckets: u64,
@@ -99,9 +101,14 @@ impl Geometry {
         let regions_per_device = (usable - SUPERBLOCK_BYTES) / region_bytes;
         let regions = regions_per_device * devices;
         let k_ahead = (4 * n).max(128).min(regions / 4).max(1);
-        if regions < k_ahead + 2 * n + 4 {
-            return Err(format!("need more regions: have {regions}, need ≥ {}", k_ahead + 2 * n + 4));
+        // One round of region opens moves the cursor by n. The limit must stay above that or
+        // every open region counts as lagging: each gets sealed nearly empty, and the next
+        // open moves the cursor again. It must also stay clear of the reclaim point.
+        let min_regions = k_ahead + 4 * n + 4;
+        if regions < min_regions {
+            return Err(format!("need more regions: have {regions}, need ≥ {min_regions}"));
         }
+        let open_lag_limit = (regions / 4).max(2 * n).min(regions - k_ahead - 2 * n - 2);
         let ssd_slots = regions * spr;
         if ssd_slots >= (u32::MAX as u64) {
             return Err("too many SSD slots for 32-bit ids".into());
@@ -141,6 +148,7 @@ impl Geometry {
             regions_per_device,
             ssd_slots,
             k_ahead,
+            open_lag_limit,
             entries,
             buckets,
             ghost_buckets,
@@ -273,6 +281,18 @@ mod tests {
         assert_eq!(g.slots_per_region, 3271);
         assert_eq!(g.regions, 55_432);
         assert_eq!(g.ssd_slots, 181_318_072);
+    }
+
+    #[test]
+    fn open_lag_limit_stays_above_one_round_of_opens() {
+        for (n, dev) in [(2u16, 1u64 << 30), (8, 3 << 30), (8, 4 << 30), (8, 64 << 30), (64, 32 << 30), (64, 4096 << 30)] {
+            let mut c = cfg(65536, 4 << 30, n);
+            c.memory_bytes = 4 << 30;
+            let g = Geometry::compute(&c, dev).unwrap();
+            assert!(g.open_lag_limit >= 2 * n as u64, "{n} {dev}: {}", g.open_lag_limit);
+            assert!(g.open_lag_limit + g.k_ahead + 2 * n as u64 + 2 <= g.regions, "{n} {dev}");
+        }
+        assert!(Geometry::compute(&cfg(65536, 4 << 30, 8), 2 << 30).unwrap_err().contains("need more regions"));
     }
 
     #[test]
