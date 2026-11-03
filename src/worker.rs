@@ -370,6 +370,7 @@ impl Worker {
     // ================================================================== main loop
 
     pub fn run(&mut self) {
+        crate::alloc_guard::set_guarded(true);
         while !self.sh.stop.load(Relaxed) {
             self.reap();
             self.owner_pass();
@@ -386,6 +387,7 @@ impl Worker {
             }
             self.wait();
         }
+        crate::alloc_guard::set_guarded(false);
         self.publish_stats();
     }
 

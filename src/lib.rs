@@ -1,6 +1,7 @@
 //! ssdcache: a tiered (DRAM probation → SSD main) S3-FIFO cache server over io_uring and kTLS.
 //! See DESIGN.md.
 
+pub mod alloc_guard;
 pub mod config;
 pub mod core;
 pub mod crc;

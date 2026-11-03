@@ -9,6 +9,9 @@ struct Args {
     config: std::path::PathBuf,
 }
 
+#[global_allocator]
+static ALLOC: ssdcache::alloc_guard::GuardedAlloc = ssdcache::alloc_guard::GuardedAlloc;
+
 static STOP: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {

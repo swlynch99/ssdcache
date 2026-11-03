@@ -10,8 +10,8 @@ macro_rules! fields {
         pub const SHARD_FIELDS: &[&str] = &[$(stringify!($s)),*];
         pub const WORKER_FIELDS: &[&str] = &[$(stringify!($w)),*];
         pub const GAUGE_FIELDS: &[&str] = &[$(stringify!($g)),*];
-        fn shard_values(sh: &Shard) -> Vec<u64> { vec![$(sh.stats.$s),*] }
-        fn worker_values(c: &WorkerCounters) -> Vec<u64> { vec![$(c.$w),*] }
+        fn shard_values(sh: &Shard) -> [u64; [$(stringify!($s)),*].len()] { [$(sh.stats.$s),*] }
+        fn worker_values(c: &WorkerCounters) -> [u64; [$(stringify!($w)),*].len()] { [$(c.$w),*] }
     };
 }
 
@@ -41,8 +41,7 @@ impl Default for WorkerStats {
 }
 
 impl WorkerStats {
-    /// Called by the worker every ~250 ms. (The `Vec`s are tiny and this is off the request
-    /// path; a fixed-array version is a phase-5 cleanup.)
+    /// Called by the worker every ~250 ms. Allocation-free.
     pub fn publish(&self, sh: &Shard, c: &WorkerCounters) {
         for (a, v) in self.shard.iter().zip(shard_values(sh)) {
             a.store(v, Relaxed);
@@ -82,6 +81,7 @@ pub fn render_json(all: &[WorkerStats], extra: &[(&str, u64)]) -> String {
     for (i, f) in GAUGE_FIELDS.iter().enumerate() {
         s += &format!("  \"{f}\": {},\n", sum(&|w| &w.gauges, i));
     }
+    s += &format!("  \"worker_allocs\": {},\n", crate::alloc_guard::WORKER_ALLOCS.load(Relaxed));
     for (k, v) in extra {
         s += &format!("  \"{k}\": {v},\n");
     }
