@@ -61,7 +61,7 @@ With uniform 64 KiB values, every free run has exactly the right size. Each valu
 
 ### 3.3 Page metadata
 
-An array with one 16 B record per page, about 0.4% of DRAM:
+An array with one 20 B record per page, about 0.5% of DRAM:
 
 ```rust
 struct PageMeta {
@@ -121,7 +121,7 @@ Entry count is bounded by construction:
 
 So the slab, index and M ring never need a count-based eviction rule. Ghost and sketch sizes use the estimate.
 
-Example: 16 GiB DRAM, 40 GiB device, 8 workers, `avg_value_bytes = 65536`. SSD metadata stays close to today's, plus 16 B per DRAM page, which is 64 MiB. The entry slab grows, because DRAM may now hold 4M one-page objects: at most 128 MiB for 16 GiB of DRAM.
+Example: 16 GiB DRAM, 40 GiB device, 8 workers, `avg_value_bytes = 65536`. SSD metadata stays close to today's, plus 20 B per DRAM page, which is 80 MiB. The entry slab grows, because DRAM may now hold 4M one-page objects: at most 128 MiB for 16 GiB of DRAM.
 
 At `avg_value_bytes = 4096` on a 4 TB device: about 1G records. That is 16 GB of records plus about 40 GB of entries and index. Startup prints these sizes, and it fails if they exceed a limit.
 
@@ -154,7 +154,7 @@ One risk: these caps park connections, and contexts 12 and 13 suggested the park
 ### 5.4 SET path
 
 - `Reserve` carries the length, and `Reserved` returns the first page. `Commit` needs no length, because the owner has it in `PageMeta`.
-- **The stash is removed.** A slot granted ahead of time cannot fit a length nobody knows yet. So every cross-shard SET takes one more ring hop. Section 9 tests the cost. Removing it deletes `Grant` and the stash code.
+- **The stash is removed.** A slot granted ahead of time cannot fit a length nobody knows yet. So every cross-shard SET takes one Reserve hop, one owner tick per SET, and pipelined SETs from one connection to a remote owner are serialized. D16 in `DESIGN.md` rejected this design for those reasons, so section 9 must measure both effects. Removing the stash deletes `Grant` and the stash code.
 - The fill quota F stays a count, so Filling memory is bounded by `N·F·1 MiB`, 64 MiB per shard at N = 8. A client that announces 1 MiB and sends nothing holds that memory for at most `body_timeout_ms`.
 
 ### 5.5 Wear budget
@@ -222,7 +222,7 @@ Each step keeps all tests passing and is committed to `main` on its own.
 - **Simulator:** mixed sizes with delayed and reordered IO, read errors and full invariant checks. Add a fragmentation stress case.
 - **End to end:** byte-exact readback at 0, 1, 4095, 4096, 4097, 65536 and 1048576 B, on memcache, RESP and HTTP, in plaintext and TLS, from DRAM and from SSD. Cover overwrites that change size, and over-limit requests.
 - **SystemsLab:** all at 90/10 with no backfill, under 10 minutes each:
-  - Regression: fixed 64 KiB, against `5bae701`. GET and SET p99 and worker CPU should stay within run-to-run spread. This also measures the cost of removing the stash.
+  - Regression: fixed 64 KiB, against `5bae701`. GET and SET p99 and worker CPU should stay within run-to-run spread. This also measures the cost of removing the stash, including pipelined SETs.
   - A fixed 1 MiB run and a fixed 1 KiB run.
   - A mixed-size run. cachecannon appears to have one fixed `workload.values.length`, which I have not confirmed. If so, run several instances with separate keyspaces and sizes.
   - A stalled-client test for pinned-byte caps.
@@ -230,6 +230,6 @@ Each step keeps all tests passing and is committed to `main` on its own.
 ## 10. Decisions needed
 
 1. **Do values under about 4 KiB need to be space-efficient?** Without the tier in section 8 they work, but each uses a full page. My recommendation is to leave it out unless you expect many of them.
-2. **Is removing the SET stash acceptable?** I recommend yes, with the regression test as the check. It simplifies a lot of code, and SETs are 10% of the default mix.
+2. **Is removing the SET stash acceptable?** I recommend yes, if the regression run shows an acceptable cost. It simplifies a lot of code, and SETs are 10% of the default mix. The cost is one Reserve hop per cross-shard SET, and pipelined SETs from one connection to a remote owner run one at a time. A workload that pipelines many SETs would feel this most.
 3. **What should `avg_value_bytes` default to?** I propose 65536, to match current tests. A lower value makes small values work better on the SSD, but it needs more metadata. For example, 4096 needs 16 times the SSD record memory.
 4. **Is 1 MiB = 1,048,576 B right?** I've assumed it, because that is the usual memcached limit. The design allows up to 2 MiB − 1.
